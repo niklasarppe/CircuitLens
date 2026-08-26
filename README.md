@@ -1,6 +1,4 @@
-# CircuitLens
-
-**Mechanistic interpretability research on small language models.**
+## What is this?
 
 CircuitLens investigates how transformer language models implement specific behaviors by analyzing and causally intervening on their internal representations.
 
@@ -12,30 +10,42 @@ The project aims to identify the neural circuits responsible for this behavior a
 
 ## Approach
 
-* Analyze internal activations and attention patterns
-* Identify candidate attention heads and components
-* Perform targeted component ablations
-* Use activation patching to test causal hypotheses
-* Evaluate circuit behavior across controlled distribution shifts
-* Document and reproduce experimental results
+1. **Set up and validate GPT-2 Small**
+   - Load the model locally and establish a baseline for its predictions.
+   - Understand the model's architecture and internal representations.
 
-## Tech Stack
+2. **Create controlled test cases**
+   - Build simple synthetic sequences where the expected behavior is clearly defined.
+   - Measure how well GPT-2 performs the target behavior.
 
-**Python · PyTorch · Hugging Face Transformers · TransformerLens · NumPy**
+3. **Inspect the model's internal activity**
+   - Examine how information changes across layers and token positions.
+   - Look for attention heads that appear to play a role in the behavior.
+
+4. **Test individual components**
+   - Temporarily remove or alter specific attention heads and other components.
+   - Measure whether this changes the model's behavior.
+
+5. **Test causal explanations**
+   - Transfer internal activity between different inputs to see whether it changes the model's prediction in the expected way.
+   - Compare these results against control experiments.
+
+6. **Test the findings**
+   - Repeat the experiments with different sequences and conditions.
+   - Determine whether the identified components consistently contribute to the behavior.
+
+7. **Document the results**
+   - Record experiments, assumptions, failures, and findings.
+   - Summarize the final results and conclusions in a research report.
 
 ## Project Status
 
-🚧 **In progress**
-
+**Very much still in progress**
 
 ## Results
 
-*To be updated as experiments are completed.*
+*To be updated.*
 
 ## Research Report
 
-*Coming soon.*
-
-## Author
-
-[Niklas Arppe](https://github.com/niklasarppe)
+*To be updated.*
