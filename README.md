@@ -38,4 +38,4 @@ The project aims to identify the neural circuits responsible for this behavior a
 
 ## Author
 
-[Your Name](https://github.com/niklasarppe)
+[Niklas Arppe](https://github.com/niklasarppe)
