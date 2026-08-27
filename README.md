@@ -49,3 +49,7 @@ The project aims to identify the neural circuits responsible for this behavior a
 ## Research Report
 
 *To be updated.*
+
+## On the name
+
+I thought I had come up with a slick name, but it turns out that it was already used [here](https://github.com/egolimblevskaia/CircuitLens). While the names are the same, the projects have different goals. The original CircuitLens focuses on automated interpretability of transcoder features and their underlying circuits, whereas this project focuses on understanding and causally testing specific circuits in GPT-2 Small, starting with induction and token-copying behavior.
