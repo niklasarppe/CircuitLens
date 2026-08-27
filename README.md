@@ -1,6 +1,6 @@
 ## What is this?
 
-CircuitLens investigates how transformer language models implement specific behaviors by analyzing and causally intervening on their internal representations.
+CircuitLens investigates how transformer language models implement specific behaviors by analyzing and causally intervening on their internal representations. Really, this is just a way for me to get my feet wet in mechanistic interpretability.
 
 ## Research Question
 
@@ -40,7 +40,7 @@ The project aims to identify the neural circuits responsible for this behavior a
 
 ## Project Status
 
-**Very much still in progress**
+*Very much still in progress...*
 
 ## Results
 
