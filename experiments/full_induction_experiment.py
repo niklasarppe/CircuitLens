@@ -10,6 +10,8 @@ SEED = 42
 N_SAMPLES = 200
 SEQUENCE_LENGTH = 8
 TOP_K_HEADS = 20
+TOKEN_POOL_SIZE = 200
+MEAN_ABLATION_REFERENCE_SAMPLES = 100
 
 RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
@@ -21,38 +23,42 @@ def get_device():
     return "cpu"
 
 
-def build_token_pool(model):
-    candidates = [
-        " apple", " banana", " cherry", " dog", " eagle",
-        " forest", " garden", " house", " island", " jacket",
-        " kitten", " lemon", " mountain", " notebook", " orange",
-        " piano", " rabbit", " river", " summer", " table",
-        " umbrella", " violin", " window", " yellow", " zebra",
-        " alpha", " beta", " gamma", " delta", " epsilon",
-        " football", " guitar", " hammer", " island", " jungle",
-        " kitchen", " library", " morning", " ocean", " planet",
-        " queen", " rocket", " school", " train", " valley",
-    ]
+def mean_and_std(values):
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    return mean, variance ** 0.5
 
-    token_pool = []
 
-    for text in candidates:
-        tokens = model.to_tokens(
-            text,
-            prepend_bos=False,
-        )[0]
+def build_token_pool(model, rng):
+    """
+    Sample random token ids directly from the vocabulary, rather than
+    English words. This avoids the semantic-similarity confound you get
+    from natural-language candidates (e.g. " apple" / " orange" having
+    elevated baseline attention/logit relationships unrelated to induction).
+    """
+    vocab_size = model.cfg.d_vocab
 
-        if len(tokens) == 1:
-            token_pool.append(tokens[0].item())
-
-    token_pool = list(dict.fromkeys(token_pool))
-
-    if len(token_pool) < SEQUENCE_LENGTH * 2:
-        raise RuntimeError(
-            f"Only found {len(token_pool)} usable single-token strings."
+    special_ids = {
+        token_id
+        for token_id in (
+            getattr(model.tokenizer, "eos_token_id", None),
+            getattr(model.tokenizer, "bos_token_id", None),
+            getattr(model.tokenizer, "pad_token_id", None),
         )
+        if token_id is not None
+    }
 
-    return token_pool
+    pool = set()
+
+    while len(pool) < TOKEN_POOL_SIZE:
+        candidate = rng.randrange(vocab_size)
+
+        if candidate in special_ids:
+            continue
+
+        pool.add(candidate)
+
+    return list(pool)
 
 
 def make_repeated_sequence(token_pool, rng):
@@ -163,10 +169,53 @@ def attention_copy_scores(attention, sequence):
     return scores / counts
 
 
-def ablate_head(model, tokens, layer, head):
+@torch.no_grad()
+def compute_mean_activations(model, samples):
+    """
+    Average attn.hook_z activation per head over a reference distribution,
+    used for mean-ablation. Using the shuffled (non-induction) sequences as
+    the reference gives an "expected output absent the repeat structure"
+    baseline, rather than the off-distribution zero vector.
+    """
+    n_layers = model.cfg.n_layers
+    n_heads = model.cfg.n_heads
+    d_head = model.cfg.d_head
+
+    totals = torch.zeros(n_layers, n_heads, d_head, device=model.cfg.device)
+    count = 0
+
+    for sequence in samples:
+        tokens = torch.tensor(
+            [sequence],
+            dtype=torch.long,
+            device=model.cfg.device,
+        )
+
+        _, cache = model.run_with_cache(
+            tokens,
+            names_filter=lambda name: name.endswith("attn.hook_z"),
+        )
+
+        for layer in range(n_layers):
+            z = cache[f"blocks.{layer}.attn.hook_z"]  # (batch, pos, head, d_head)
+            totals[layer] += z.sum(dim=(0, 1))
+
+        count += tokens.shape[1]
+
+    return totals / count
+
+
+def ablate_head(model, tokens, layer, head, mode="zero", mean_activations=None):
     def hook(value, hook):
         value = value.clone()
-        value[:, :, head, :] = 0
+
+        if mode == "zero":
+            value[:, :, head, :] = 0
+        elif mode == "mean":
+            value[:, :, head, :] = mean_activations[layer, head]
+        else:
+            raise ValueError(f"Unknown ablation mode: {mode}")
+
         return value
 
     hook_name = f"blocks.{layer}.attn.hook_z"
@@ -177,16 +226,14 @@ def ablate_head(model, tokens, layer, head):
     )
 
 
-def evaluate_ablation(
-    model,
-    samples,
-    candidate_heads,
-):
+@torch.no_grad()
+def evaluate_ablation(model, samples, candidate_heads, mean_activations):
     results = []
 
     for layer, head in candidate_heads:
         normal_scores = []
-        ablated_scores = []
+        zero_scores = []
+        mean_scores = []
 
         for sequence in samples:
             tokens = torch.tensor(
@@ -198,39 +245,48 @@ def evaluate_ablation(
             targets = get_induction_targets(sequence)
 
             normal_logits = model(tokens)
-
-            normal_score = induction_logit_score(
-                normal_logits,
-                targets,
-                SEQUENCE_LENGTH,
+            normal_scores.append(
+                induction_logit_score(normal_logits, targets, SEQUENCE_LENGTH)
             )
 
-            ablated_logits = ablate_head(
+            zero_logits = ablate_head(model, tokens, layer, head, mode="zero")
+            zero_scores.append(
+                induction_logit_score(zero_logits, targets, SEQUENCE_LENGTH)
+            )
+
+            mean_logits = ablate_head(
                 model,
                 tokens,
                 layer,
                 head,
+                mode="mean",
+                mean_activations=mean_activations,
+            )
+            mean_scores.append(
+                induction_logit_score(mean_logits, targets, SEQUENCE_LENGTH)
             )
 
-            ablated_score = induction_logit_score(
-                ablated_logits,
-                targets,
-                SEQUENCE_LENGTH,
-            )
+        normal_mean, _ = mean_and_std(normal_scores)
+        zero_mean, _ = mean_and_std(zero_scores)
+        mean_mean, _ = mean_and_std(mean_scores)
 
-            normal_scores.append(normal_score)
-            ablated_scores.append(ablated_score)
+        zero_effects = [n - z for n, z in zip(normal_scores, zero_scores)]
+        mean_effects = [n - m for n, m in zip(normal_scores, mean_scores)]
 
-        normal = sum(normal_scores) / len(normal_scores)
-        ablated = sum(ablated_scores) / len(ablated_scores)
+        zero_effect_mean, zero_effect_std = mean_and_std(zero_effects)
+        mean_effect_mean, mean_effect_std = mean_and_std(mean_effects)
 
         results.append(
             {
                 "layer": layer,
                 "head": head,
-                "normal_score": normal,
-                "ablated_score": ablated,
-                "effect": normal - ablated,
+                "normal_score": normal_mean,
+                "zero_ablated_score": zero_mean,
+                "zero_effect": zero_effect_mean,
+                "zero_effect_std": zero_effect_std,
+                "mean_ablated_score": mean_mean,
+                "mean_effect": mean_effect_mean,
+                "mean_effect_std": mean_effect_std,
             }
         )
 
@@ -253,9 +309,6 @@ def save_results(results, filename):
 
 
 def main():
-    random.seed(SEED)
-    torch.manual_seed(SEED)
-
     device = get_device()
 
     print(f"Using device: {device}")
@@ -267,9 +320,9 @@ def main():
 
     model.eval()
 
-    token_pool = build_token_pool(model)
-
     rng = random.Random(SEED)
+
+    token_pool = build_token_pool(model, rng)
 
     repeated_samples = [
         make_repeated_sequence(token_pool, rng)
@@ -290,59 +343,60 @@ def main():
     repeated_induction_scores = []
     shuffled_induction_scores = []
 
-    for sample_index, sequence in enumerate(repeated_samples):
-        tokens = torch.tensor(
-            [sequence],
-            dtype=torch.long,
-            device=device,
-        )
-
-        logits, attention = run_with_attention(
-            model,
-            tokens,
-        )
-
-        copy_scores = attention_copy_scores(
-            attention,
-            sequence,
-        )
-
-        attention_totals += copy_scores
-
-        targets = get_induction_targets(sequence)
-
-        score = induction_logit_score(
-            logits,
-            targets,
-            SEQUENCE_LENGTH,
-        )
-
-        repeated_induction_scores.append(score)
-
-        if sample_index % 25 == 0:
-            print(
-                f"Repeated samples: "
-                f"{sample_index + 1}/{N_SAMPLES}"
+    with torch.no_grad():
+        for sample_index, sequence in enumerate(repeated_samples):
+            tokens = torch.tensor(
+                [sequence],
+                dtype=torch.long,
+                device=device,
             )
 
-    for sequence in shuffled_samples:
-        tokens = torch.tensor(
-            [sequence],
-            dtype=torch.long,
-            device=device,
-        )
+            logits, attention = run_with_attention(
+                model,
+                tokens,
+            )
 
-        logits = model(tokens)
+            copy_scores = attention_copy_scores(
+                attention,
+                sequence,
+            )
 
-        targets = get_induction_targets(sequence)
+            attention_totals += copy_scores
 
-        score = induction_logit_score(
-            logits,
-            targets,
-            SEQUENCE_LENGTH,
-        )
+            targets = get_induction_targets(sequence)
 
-        shuffled_induction_scores.append(score)
+            score = induction_logit_score(
+                logits,
+                targets,
+                SEQUENCE_LENGTH,
+            )
+
+            repeated_induction_scores.append(score)
+
+            if sample_index % 25 == 0:
+                print(
+                    f"Repeated samples: "
+                    f"{sample_index + 1}/{N_SAMPLES}"
+                )
+
+        for sequence in shuffled_samples:
+            tokens = torch.tensor(
+                [sequence],
+                dtype=torch.long,
+                device=device,
+            )
+
+            logits = model(tokens)
+
+            targets = get_induction_targets(sequence)
+
+            score = induction_logit_score(
+                logits,
+                targets,
+                SEQUENCE_LENGTH,
+            )
+
+            shuffled_induction_scores.append(score)
 
     attention_average = attention_totals / N_SAMPLES
 
@@ -355,7 +409,7 @@ def main():
     candidates = []
 
     print()
-    print("Average attention to earlier corresponding token:")
+    print("Average attention to token following earlier occurrence:")
     print()
 
     for rank, (value, index) in enumerate(
@@ -373,21 +427,16 @@ def main():
             f"{value.item():.4f}"
         )
 
-    repeated_mean = sum(
-        repeated_induction_scores
-    ) / len(repeated_induction_scores)
-
-    shuffled_mean = sum(
-        shuffled_induction_scores
-    ) / len(shuffled_induction_scores)
+    repeated_mean, repeated_std = mean_and_std(repeated_induction_scores)
+    shuffled_mean, shuffled_std = mean_and_std(shuffled_induction_scores)
 
     print()
     print("Induction score:")
     print(
-        f"Repeated: {repeated_mean:.4f}"
+        f"Repeated: {repeated_mean:.4f} (±{repeated_std:.4f})"
     )
     print(
-        f"Shuffled: {shuffled_mean:.4f}"
+        f"Shuffled: {shuffled_mean:.4f} (±{shuffled_std:.4f})"
     )
     print(
         f"Difference: "
@@ -426,8 +475,15 @@ def main():
     print(f"Saved: {attention_path}")
 
     print()
+    print("Computing mean-ablation reference activations...")
+
+    mean_activations = compute_mean_activations(
+        model,
+        shuffled_samples[:MEAN_ABLATION_REFERENCE_SAMPLES],
+    )
+
     print(
-        f"Running causal ablations on top "
+        f"Running causal ablations (zero and mean) on top "
         f"{TOP_K_HEADS} heads..."
     )
 
@@ -435,10 +491,11 @@ def main():
         model,
         repeated_samples[:50],
         candidates,
+        mean_activations,
     )
 
     ablation_results.sort(
-        key=lambda x: x["effect"],
+        key=lambda x: x["zero_effect"],
         reverse=True,
     )
 
@@ -453,11 +510,10 @@ def main():
         print(
             f"{rank:2}. "
             f"L{result['layer']}H{result['head']}: "
-            f"effect={result['effect']:.4f} "
-            f"("
-            f"{result['normal_score']:.4f} -> "
-            f"{result['ablated_score']:.4f}"
-            f")"
+            f"zero_effect={result['zero_effect']:.4f} "
+            f"(±{result['zero_effect_std']:.4f}), "
+            f"mean_effect={result['mean_effect']:.4f} "
+            f"(±{result['mean_effect_std']:.4f})"
         )
 
     ablation_path = save_results(
