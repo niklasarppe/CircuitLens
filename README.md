@@ -1,55 +1,59 @@
 ## What is this?
 
-CircuitLens investigates how transformer language models implement specific behaviors by analyzing and causally intervening on their internal representations. Really, this is just a way for me to get my feet wet in mechanistic interpretability.
+CircuitLens2.0 is me poking around inside a small language model (GPT-2
+Small) to figure out how it pulls off one specific trick, mostly as a
+way to get my feet wet in mechanistic interpretability.
 
 ## Research Question
 
-> **How does GPT-2 Small implement induction and token-copying behavior?**
+> **How does GPT-2 Small know to copy a pattern it's already seen?**
 
-The project aims to identify the neural circuits responsible for this behavior and test their causal importance using mechanistic interpretability techniques.
+If a sequence goes "... A B ... A", the model tends to predict B next,
+purely because it already saw that exact pattern once. The goal here
+is to find which part of the model is responsible for that, and
+actually test whether it's responsible rather than just eyeballing a
+correlation.
 
 ## Approach
 
-1. **Set up and validate GPT-2 Small**
-   - Load the model locally and establish a baseline for its predictions.
-   - Understand the model's architecture and internal representations.
-
-2. **Create controlled test cases**
-   - Build simple synthetic sequences where the expected behavior is clearly defined.
-   - Measure how well GPT-2 performs the target behavior.
-
-3. **Inspect the model's internal activity**
-   - Examine how information changes across layers and token positions.
-   - Look for attention heads that appear to play a role in the behavior.
-
-4. **Test individual components**
-   - Temporarily remove or alter specific attention heads and other components.
-   - Measure whether this changes the model's behavior.
-
-5. **Test causal explanations**
-   - Transfer internal activity between different inputs to see whether it changes the model's prediction in the expected way.
-   - Compare these results against control experiments.
-
-6. **Test the findings**
-   - Repeat the experiments with different sequences and conditions.
-   - Determine whether the identified components consistently contribute to the behavior.
-
-7. **Document the results**
-   - Record experiments, assumptions, failures, and findings.
-   - Summarize the final results and conclusions in a research report.
+1. **Get the model running locally** and get a feel for its basic setup.
+2. **Build simple test sequences** where the "right answer" (copy the
+   earlier pattern) is unambiguous, plus a control condition with
+   nothing to copy.
+3. **Look at attention patterns** to find heads that seem to be doing
+   the copying.
+4. **Knock out individual heads**, one at a time, and see if that
+   breaks the copying behavior.
+5. **Sanity-check across many random sequences** instead of trusting
+   one example.
+6. **Write it all up** -- including the dead ends and the numbers
+   that surprised me.
 
 ## Project Status
 
-*Very much still in progress...*
+Steps 1-5 are done. Currently writing up the results properly (step 6)
+and tidying up the code.
 
 ## Results
 
-*To be updated.*
+Short version: yes, GPT-2 Small clearly does this copying trick, and a
+handful of specific attention heads seem responsible -- mostly heads
+other people have already found doing the same thing, which is a nice
+sanity check that the method works. One surprise: a head that looked
+promising by attention alone actually seems to work *against* copying
+once you test it directly, which lines up with something called "copy
+suppression" reported elsewhere. Numbers and figures are in the report
+below.
 
 ## Research Report
 
-*To be updated.*
+A full writeup with the actual numbers, figures, and caveats is in progress. 
 
 ## On the name
 
-I thought I had come up with a slick name, but it turns out that it was already used [here](https://github.com/egolimblevskaia/CircuitLens). While the names are the same, the projects have different goals. The original CircuitLens focuses on automated interpretability of transcoder features and their underlying circuits, whereas this project focuses on understanding and causally testing specific circuits in GPT-2 Small, starting with induction and token-copying behavior.
+I thought I had come up with a slick name, but it turns out it was
+already used [here](https://github.com/egolimblevskaia/CircuitLens).
+Same name, different project: that one is about automated
+interpretability of transcoder features and the circuits behind them,
+while this one is about finding and causally testing one specific
+circuit in GPT-2 Small, starting with induction and token-copying.
