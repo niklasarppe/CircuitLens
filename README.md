@@ -50,7 +50,6 @@ A full writeup with the actual numbers, figures, and caveats is in progress.
 
 I thought I had come up with a slick name, but it turns out it was
 already used [here](https://github.com/egolimblevskaia/CircuitLens).
-Same name, different project: that one is about automated
-interpretability of transcoder features and the circuits behind them,
+Their project is about automated interpretability of transcoder features and the circuits behind them,
 while this one is about finding and causally testing one specific
-circuit in GPT-2 Small, starting with induction and token-copying.
+circuit in GPT-2-Small, starting with induction and token-copying.
