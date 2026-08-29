@@ -1,8 +1,6 @@
 ## What is this?
 
-CircuitLens2.0 is me poking around inside a small language model (GPT-2
-Small) to figure out how it pulls off one specific trick, mostly as a
-way to get my feet wet in mechanistic interpretability.
+CircuitLens2.0 is me poking around inside a small language model (GPT-2-Small) to figure out how it pulls off one specific trick, mostly as a way to get my feet wet in mechanistic interpretability.
 
 ## Research Question
 
@@ -16,30 +14,29 @@ correlation.
 
 ## Approach
 
-1. **Get the model running locally** and get a feel for its basic setup.
-2. **Build simple test sequences** where the "right answer" (copy the
+1. Get the model running locally and get a feel for its basic setup.
+2. Build simple test sequences where the "right answer" (copy the
    earlier pattern) is unambiguous, plus a control condition with
    nothing to copy.
-3. **Look at attention patterns** to find heads that seem to be doing
+3. Look at attention patterns to find heads that seem to be doing
    the copying.
-4. **Knock out individual heads**, one at a time, and see if that
+4. Knock out individual heads, one at a time, and see if that
    breaks the copying behavior.
-5. **Sanity-check across many random sequences** instead of trusting
+5. Sanity-check across many random sequences instead of trusting
    one example.
-6. **Write it all up** -- including the dead ends and the numbers
+6. Write it all up, including the dead ends and the numbers
    that surprised me.
 
 ## Project Status
 
-Steps 1-5 are done. Currently writing up the results properly (step 6)
-and tidying up the code.
+Steps 1-5 are done. Currently writing up the results properly and tidying up the code.
 
 ## Results
 
-Short version: yes, GPT-2 Small clearly does this copying trick, and a
-handful of specific attention heads seem responsible -- mostly heads
+Short version: yes, GPT-2-Small clearly does this copying trick, and a
+handful of specific attention heads seem responsible. These are mostly heads
 other people have already found doing the same thing, which is a nice
-sanity check that the method works. One surprise: a head that looked
+sanity check that the method works. One surprise is that a head that looked
 promising by attention alone actually seems to work *against* copying
 once you test it directly, which lines up with something called "copy
 suppression" reported elsewhere. Numbers and figures are in the report
