@@ -8,8 +8,7 @@ attn_df = pd.read_csv('results/attention_head_scores.csv')
 attn_df = attn_df.sort_values('attention_to_copy', ascending=False).reset_index(drop=True)
 attn_labels = 'L' + attn_df['layer'].astype(str) + 'H' + attn_df['head'].astype(str)
 
-N_LABELED = 20  # matches the top-20 table -- labeling all 144 is unreadable
-                # at any rotation/fontsize, and the tail doesn't need names
+N_LABELED = 20  # labeling all 144 is unreadable
 
 plt.figure(figsize=(12, 4))
 plt.bar(range(len(attn_df)), attn_df['attention_to_copy'], width=1.0)
@@ -42,9 +41,6 @@ plt.savefig('figures/ablation_effects.pdf')
 plt.close()
 
 # --- Figure 3: attention score vs. zero-ablation effect -----------------
-# Reuses attn_df / abl_df already loaded above rather than re-reading the
-# CSVs; merge is on the (layer, head) key columns, so there's no
-# column-name collision to worry about.
 
 merged = abl_df.merge(attn_df, on=['layer', 'head'])
 
