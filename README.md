@@ -14,18 +14,47 @@ correlation.
 
 ## Approach
 
-1. Get the model running locally and get a feel for its basic setup.
+1. Get the model running locally.
 2. Build simple test sequences where the "right answer" (copy the
    earlier pattern) is unambiguous, plus a control condition with
    nothing to copy.
 3. Look at attention patterns to find heads that seem to be doing
    the copying.
-4. Knock out individual heads, one at a time, and see if that
+4. Knock out individual heads one at a time and see if that
    breaks the copying behavior.
-5. Sanity-check across many random sequences instead of trusting
-   one example.
-6. Write it all up, including the dead ends and the numbers
-   that surprised me.
+5. Sanity-check across many random sequences.
+6. Write it all up in a report.
+
+## How This Actually Works
+
+Here's roughly what the code does:
+
+- **Build test sequences.** Take a random handful of tokens as "the
+  first half", then glue a second half onto it. In the *repeated*
+  condition, the second half is an exact copy of the first. In the
+  *shuffled* condition, it's the same tokens rearranged specifically so nothing
+  lines up.
+- **Run the model and watch where it looks.** GPT-2 Small has 144
+  small sub-parts (attention heads, 12 per layer of the underlying neural network)
+  that each decide, at every
+  position, how much to "look back" at earlier positions. For every
+  head, I check how much it looks back specifically at the token that
+  came right after an earlier match.
+- **Rank the heads, then test the top ones directly.** Looking in the
+  right place doesn't prove a head is actually doing anything as it
+  could just be a coincidence. So for the ~20 most promising heads, I
+  temporarily disable them one at a time and check whether the model
+  gets noticeably worse at completing the pattern. If it does, that's
+  real evidence the head matters.
+- **Disable heads in two different ways.** I try replacing a head's
+  output with plain zero, and separately with that head's "typical"
+  output on sequences with nothing to copy. Zeroing it out is the
+  obvious thing to try, but it can also wipe out unrelated stuff the
+  head normally contributes. Comparing both gives a clearer picture
+  of what the head is actually doing.
+- **Repeat the process.** Everything above is repeated over hundreds 
+  of different random sequences, so the results are an average with some 
+  sense of how consistent they are, rather than a fluke from one lucky (or unlucky) example.
 
 ## Project Status
 
@@ -50,6 +79,5 @@ A full writeup with the actual numbers, figures, and caveats is in progress.
 
 I thought I had come up with a slick name, but it turns out it was
 already used [here](https://github.com/egolimblevskaia/CircuitLens).
-Their project is about automated interpretability of transcoder features and the circuits behind them,
-while this one is about finding and causally testing one specific
+Their project is about automated interpretability of transcoder features and the circuits behind them, while this one is about finding and causally testing one specific
 circuit in GPT-2 Small, starting with induction and token-copying.
