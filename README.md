@@ -1,6 +1,6 @@
 ## What is this?
 
-CircuitLens2.0 is me poking around inside a small language model (GPT-2-Small) to figure out how it pulls off one specific trick, mostly as a way to get my feet wet in mechanistic interpretability.
+CircuitLens2.0 is me poking around inside a small language model (GPT-2 Small) to figure out how it pulls off one specific trick, mostly as a way to get my feet wet in mechanistic interpretability.
 
 ## Research Question
 
@@ -33,7 +33,7 @@ Steps 1-5 are done. Currently writing up the results properly and tidying up the
 
 ## Results
 
-Short version: yes, GPT-2-Small clearly does this copying trick, and a
+Short version: yes, GPT-2 Small clearly does this copying trick, and a
 handful of specific attention heads seem responsible. These are mostly heads
 other people have already found doing the same thing, which is a nice
 sanity check that the method works. One surprise is that a head that looked
@@ -52,4 +52,4 @@ I thought I had come up with a slick name, but it turns out it was
 already used [here](https://github.com/egolimblevskaia/CircuitLens).
 Their project is about automated interpretability of transcoder features and the circuits behind them,
 while this one is about finding and causally testing one specific
-circuit in GPT-2-Small, starting with induction and token-copying.
+circuit in GPT-2 Small, starting with induction and token-copying.
