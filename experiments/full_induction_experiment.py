@@ -3,20 +3,20 @@ import random
 from pathlib import Path
 
 import torch
-from transformer_lens import HookedTransformer
+from transformer_lens import HookedTransformer 
 
 
-SEED = 42
+SEED = 42 # fixed random seed for reproducibility
 N_SAMPLES = 200
-SEQUENCE_LENGTH = 8
-TOP_K_HEADS = 20
+SEQUENCE_LENGTH = 8 # length of half a sequence
+TOP_K_HEADS = 20 # number of attention-ranked heads to get carried to the causal-ablation stage
 TOKEN_POOL_SIZE = 200
 MEAN_ABLATION_REFERENCE_SAMPLES = 100
 
 RESULTS_DIR = Path("results")
 RESULTS_DIR.mkdir(exist_ok=True)
 
-
+# use mps whenever possible, otherwise run on cpu
 def get_device():
     if torch.backends.mps.is_available():
         return "mps"
@@ -28,16 +28,12 @@ def mean_and_std(values):
     variance = sum((v - mean) ** 2 for v in values) / len(values)
     return mean, variance ** 0.5
 
-
+# sample random token ids directly from the vocabulary rather than english words
 def build_token_pool(model, rng):
-    """
-    Sample random token ids directly from the vocabulary, rather than
-    English words. This avoids the semantic-similarity confound you get
-    from natural-language candidates (e.g. " apple" / " orange" having
-    elevated baseline attention/logit relationships unrelated to induction).
-    """
-    vocab_size = model.cfg.d_vocab
+    
+    vocab_size = model.cfg.d_vocab # gets gpt-2 small's vocabulary of 50,257 tokens
 
+    # avoids attribute errors
     special_ids = {
         token_id
         for token_id in (
@@ -50,6 +46,7 @@ def build_token_pool(model, rng):
 
     pool = set()
 
+    # draws random token ids until we've reahed 200 distinct ones
     while len(pool) < TOKEN_POOL_SIZE:
         candidate = rng.randrange(vocab_size)
 
@@ -60,14 +57,14 @@ def build_token_pool(model, rng):
 
     return list(pool)
 
-
+# creates the second half of our list, drawing distinct tokens from the pool above
 def make_repeated_sequence(token_pool, rng):
     first_half = rng.sample(token_pool, SEQUENCE_LENGTH)
     second_half = first_half.copy()
 
     return first_half + second_half
 
-
+# shuffling first half sufficiently many times until it's distinct from the old order
 def make_shuffled_sequence(token_pool, rng):
     first_half = rng.sample(token_pool, SEQUENCE_LENGTH)
     second_half = first_half.copy()
@@ -83,7 +80,7 @@ def make_shuffled_sequence(token_pool, rng):
 
     return first_half + second_half
 
-
+# map each token in the first half to whatever token followed it
 def get_induction_targets(sequence):
     midpoint = len(sequence) // 2
     first_half = sequence[:midpoint]
@@ -93,8 +90,9 @@ def get_induction_targets(sequence):
     for i in range(midpoint - 1):
         successor[first_half[i]] = first_half[i + 1]
 
-    successor[first_half[-1]] = first_half[0]
+    successor[first_half[-1]] = first_half[0] # wraps the last token back to the first
 
+    # fetch what the target would be if the naive pattern continued
     targets = []
 
     for token in sequence[midpoint:]:
@@ -104,6 +102,9 @@ def get_induction_targets(sequence):
 
 
 def run_with_attention(model, tokens):
+    # one regular forward pass, saving a copy of every 
+    # internal tensor matching names_filter. this reduces 
+    # memory load instead of caching everything
     logits, cache = model.run_with_cache(
         tokens,
         names_filter=lambda name: name.endswith("attn.hook_pattern"),
@@ -118,9 +119,15 @@ def run_with_attention(model, tokens):
 
     attention = torch.stack(patterns)
 
+    # even though we only cache restricted data,
+    # all the final logits are in the final output
+    # since we're still running an entire forward pass
+    # in the background
     return logits, attention
 
 
+# how much does the model favor the correct token over its
+# best-scoring wrong alternative, computed across every token
 def induction_logit_score(logits, targets, start_position):
     scores = []
 
@@ -129,9 +136,9 @@ def induction_logit_score(logits, targets, start_position):
 
         correct = logits[0, position, target]
 
-        distractors = logits[0, position].clone()
+        distractors = logits[0, position].clone() # clone so we don't touch the real logits
 
-        distractors[target] = -torch.inf
+        distractors[target] = -torch.inf # target can't be its own distractor
 
         best_distractor = distractors.max()
 
@@ -141,18 +148,21 @@ def induction_logit_score(logits, targets, start_position):
 
     return sum(scores) / len(scores)
 
-
+# average, per (layer, head), attention paid to the token that
+# followed a given token's earlier occurrence in the sequence
 def attention_copy_scores(attention, sequence):
     midpoint = len(sequence) // 2
 
+    # attention is (layer, batch, head, query_pos, key_pos)
     n_layers = attention.shape[0]
     n_heads = attention.shape[2]
 
-    scores = torch.zeros(n_layers, n_heads, device=attention.device)
-    counts = torch.zeros_like(scores)
+    scores = torch.zeros(n_layers, n_heads, device=attention.device) # running total per head
+    counts = torch.zeros_like(scores) # how many times each cell has been added to
 
     for second_position in range(midpoint, len(sequence)):
         token = sequence[second_position]
+        # one past where this token first appeared, wrapping around at the end
         first_position = (sequence[:midpoint].index(token) + 1) % midpoint
 
         for layer in range(n_layers):
@@ -166,17 +176,14 @@ def attention_copy_scores(attention, sequence):
                 ]
                 counts[layer, head] += 1
 
-    return scores / counts
+    return scores / counts # average over the second-half positions
 
 
+# average attn.hook_z per head over shuffled sequences, seems to be the "typical"
+# baseline used for mean-ablation, instead of the off-distribution zero vector
 @torch.no_grad()
 def compute_mean_activations(model, samples):
-    """
-    Average attn.hook_z activation per head over a reference distribution,
-    used for mean-ablation. Using the shuffled (non-induction) sequences as
-    the reference gives an "expected output absent the repeat structure"
-    baseline, rather than the off-distribution zero vector.
-    """
+    
     n_layers = model.cfg.n_layers
     n_heads = model.cfg.n_heads
     d_head = model.cfg.d_head
@@ -198,21 +205,22 @@ def compute_mean_activations(model, samples):
 
         for layer in range(n_layers):
             z = cache[f"blocks.{layer}.attn.hook_z"]  # (batch, pos, head, d_head)
-            totals[layer] += z.sum(dim=(0, 1))
+            totals[layer] += z.sum(dim=(0, 1)) # collapse batch and position
 
-        count += tokens.shape[1]
+        count += tokens.shape[1] # sequence length, batch is always 1, so this is the true element count
 
     return totals / count
 
-
+# overwrites one head's output (before it's recombined across heads)
+# for the duration of a single forward pass
 def ablate_head(model, tokens, layer, head, mode="zero", mean_activations=None):
     def hook(value, hook):
-        value = value.clone()
+        value = value.clone() # don't mutate the live activation
 
         if mode == "zero":
-            value[:, :, head, :] = 0
+            value[:, :, head, :] = 0 # this head only, all positions/batch items
         elif mode == "mean":
-            value[:, :, head, :] = mean_activations[layer, head]
+            value[:, :, head, :] = mean_activations[layer, head] # broadcasts across batch and position
         else:
             raise ValueError(f"Unknown ablation mode: {mode}")
 
@@ -222,10 +230,10 @@ def ablate_head(model, tokens, layer, head, mode="zero", mean_activations=None):
 
     return model.run_with_hooks(
         tokens,
-        fwd_hooks=[(hook_name, hook)],
+        fwd_hooks=[(hook_name, hook)], # hook is only attached for this call
     )
 
-
+# for each candidate head, compares normal vs. zero- and mean-ablated induction scores
 @torch.no_grad()
 def evaluate_ablation(model, samples, candidate_heads, mean_activations):
     results = []
@@ -244,6 +252,8 @@ def evaluate_ablation(model, samples, candidate_heads, mean_activations):
 
             targets = get_induction_targets(sequence)
 
+            # recomputed for every head, even though it doesn't depend on
+            # layer/head, kept simple 
             normal_logits = model(tokens)
             normal_scores.append(
                 induction_logit_score(normal_logits, targets, SEQUENCE_LENGTH)
@@ -270,6 +280,7 @@ def evaluate_ablation(model, samples, candidate_heads, mean_activations):
         zero_mean, _ = mean_and_std(zero_scores)
         mean_mean, _ = mean_and_std(mean_scores)
 
+        # per-sequence effect, computed before averaging so we can also get its std
         zero_effects = [n - z for n, z in zip(normal_scores, zero_scores)]
         mean_effects = [n - m for n, m in zip(normal_scores, mean_scores)]
 
@@ -296,10 +307,10 @@ def evaluate_ablation(model, samples, candidate_heads, mean_activations):
 def save_results(results, filename):
     path = RESULTS_DIR / filename
 
-    with path.open("w", newline="") as f:
+    with path.open("w", newline="") as f: # newline="" avoids extra blank lines from csv
         writer = csv.DictWriter(
             f,
-            fieldnames=results[0].keys(),
+            fieldnames=results[0].keys(), # header follows whatever keys the first row has
         )
 
         writer.writeheader()
@@ -318,8 +329,10 @@ def main():
         device=device,
     )
 
-    model.eval()
+    model.eval() # disables dropout etc, not essential for a pretrained model but apparently correct practice
 
+    # one rng threaded through the pool then both sample sets, in this exact
+    # order, so the whole run is deterministic given SEED
     rng = random.Random(SEED)
 
     token_pool = build_token_pool(model, rng)
@@ -338,12 +351,13 @@ def main():
         model.cfg.n_layers,
         model.cfg.n_heads,
         device=device,
-    )
+    ) # summed attention-copy scores, across all repeated samples
 
     repeated_induction_scores = []
     shuffled_induction_scores = []
 
     with torch.no_grad():
+        # repeated samples, track both attention-copy scores and induction score
         for sample_index, sequence in enumerate(repeated_samples):
             tokens = torch.tensor(
                 [sequence],
@@ -373,12 +387,13 @@ def main():
 
             repeated_induction_scores.append(score)
 
-            if sample_index % 25 == 0:
+            if sample_index % 25 == 0: # progress update every 25 samples
                 print(
                     f"Repeated samples: "
                     f"{sample_index + 1}/{N_SAMPLES}"
                 )
 
+        # shuffled samples, only need the induction score baseline, not attention
         for sequence in shuffled_samples:
             tokens = torch.tensor(
                 [sequence],
@@ -398,9 +413,9 @@ def main():
 
             shuffled_induction_scores.append(score)
 
-    attention_average = attention_totals / N_SAMPLES
+    attention_average = attention_totals / N_SAMPLES # mean attention-copy score per head
 
-    flattened = attention_average.flatten()
+    flattened = attention_average.flatten() # so topk can search across all layers at once
     values, indices = torch.topk(
         flattened,
         TOP_K_HEADS,
@@ -416,6 +431,7 @@ def main():
         zip(values, indices),
         start=1,
     ):
+        # undo the flatten by recovering (layer, head) from the flat index
         layer = index.item() // model.cfg.n_heads
         head = index.item() % model.cfg.n_heads
 
@@ -427,6 +443,7 @@ def main():
             f"{value.item():.4f}"
         )
 
+    # the core existence-test result, does the model actually do induction?
     repeated_mean, repeated_std = mean_and_std(repeated_induction_scores)
     shuffled_mean, shuffled_std = mean_and_std(shuffled_induction_scores)
 
@@ -445,6 +462,7 @@ def main():
 
     attention_results = []
 
+    # same layer/head decoding as above, but now for all 144 heads (full csv)
     for index in range(
         model.cfg.n_layers * model.cfg.n_heads
     ):
@@ -477,6 +495,7 @@ def main():
     print()
     print("Computing mean-ablation reference activations...")
 
+    # reference activations for mean-ablation, from a subset of the shuffled samples
     mean_activations = compute_mean_activations(
         model,
         shuffled_samples[:MEAN_ABLATION_REFERENCE_SAMPLES],
@@ -487,6 +506,8 @@ def main():
         f"{TOP_K_HEADS} heads..."
     )
 
+    # only the first 50 repeated samples. ablation is 3 forward passes per
+    # sample per head, far more expensive than the screening stage above
     ablation_results = evaluate_ablation(
         model,
         repeated_samples[:50],
