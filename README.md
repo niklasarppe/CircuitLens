@@ -1,6 +1,6 @@
 ## What is this?
 
-CircuitLens2.0 is me poking around inside a small language model (GPT-2 Small) to figure out how it pulls off one specific trick, mostly as a way to get my feet wet in mechanistic interpretability.
+CircuitLens2.0 is me poking around inside a small language model (GPT-2 Small) to figure out how it pulls off one specific trick, mostly as a way to get my feet wet in mechanistic interpretability. 
 
 ## Research Question
 
@@ -56,9 +56,6 @@ Here's roughly what the code does:
   of different random sequences, so the results are an average with some 
   sense of how consistent they are, rather than a fluke from one lucky (or unlucky) example.
 
-## Project Status
-
-Steps 1-5 are done. Currently writing up the results properly and tidying up the code.
 
 ## Results
 
@@ -70,10 +67,6 @@ promising by attention alone actually seems to work *against* copying
 once you test it directly, which lines up with something called "copy
 suppression" reported elsewhere. Numbers and figures are in the report
 below.
-
-## Research Report
-
-A full writeup with the actual numbers, figures, and caveats is in progress. 
 
 ## On the name
 
